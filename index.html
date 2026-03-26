@@ -34,7 +34,7 @@ p.sub { font-size: 14px; color: #666; margin-bottom: 24px; }
 .tick { width: 56px; height: 56px; border-radius: 50%; background: #eeedfe; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
 .tick svg { width: 28px; height: 28px; }
 .badge { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 6px; background: #e1f5ee; color: #085041; margin-left: 8px; vertical-align: middle; }
-input[type=password], input[type=text] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 0.5px solid #ddd; font-size: 14px; margin-bottom: 10px; outline: none; }
+input[type=password] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 0.5px solid #ddd; font-size: 14px; margin-bottom: 10px; outline: none; }
 input:focus { border-color: #533ab7; }
 .err { font-size: 12px; color: #a32d2d; margin-bottom: 8px; min-height: 16px; }
 .lock-icon { width: 48px; height: 48px; border-radius: 50%; background: #eeedfe; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
@@ -45,7 +45,7 @@ input:focus { border-color: #533ab7; }
 
 <!-- LOGIN SCREEN -->
 <div id="loginScreen" class="screen active">
-  <div style="padding-top: 40px;">
+  <div style="padding-top:40px;">
     <div class="lock-icon">
       <svg viewBox="0 0 24 24" fill="none" stroke="#533ab7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -68,29 +68,24 @@ input:focus { border-color: #533ab7; }
 <div id="hostScreen" class="screen">
   <h1>CDS Attendance <span id="liveBadge" class="badge">connecting...</span></h1>
   <p class="sub" id="hostDate"></p>
-
   <div class="card">
     <p style="font-size:13px;color:#888;margin-bottom:12px;text-align:center;">Members scan to get their number</p>
     <div class="qr-wrap"><div id="qrcode"></div></div>
     <p style="font-size:11px;color:#bbb;text-align:center;margin-top:10px;word-break:break-all;" id="qrUrl"></p>
   </div>
-
   <div class="stat-row">
     <div class="stat"><div class="val" id="checkedIn">0</div><div class="lbl">Checked in</div></div>
     <div class="stat"><div class="val" id="remaining">200</div><div class="lbl">Remaining</div></div>
   </div>
-
   <div class="card">
     <p style="font-size:13px;font-weight:500;margin-bottom:12px;">Recent arrivals</p>
     <div class="log" id="logList">
       <p style="font-size:13px;color:#bbb;text-align:center;padding:16px 0;">No check-ins yet</p>
     </div>
   </div>
-
-  <button class="btn" onclick="showChangePw()" style="margin-top:0;">Change password</button>
+  <button class="btn" onclick="showChangePw()">Change password</button>
   <button class="btn danger" onclick="resetSession()">Reset session</button>
   <button class="btn" onclick="logout()" style="color:#888;">Log out</button>
-
   <div id="changePwPanel" class="card" style="display:none;margin-top:16px;">
     <p style="font-size:14px;font-weight:500;margin-bottom:12px;">Change password</p>
     <input type="password" id="newPw1" placeholder="New password" />
@@ -134,7 +129,6 @@ input:focus { border-color: #533ab7; }
 
 <script>
 const DB_URL = 'https://monday-cds-attendance-default-rtdb.firebaseio.com';
-const SESSION = 'attendance';
 const PW_KEY = 'cds_admin_pw';
 const DEFAULT_PW = 'cds2024';
 
@@ -143,34 +137,60 @@ function formatTime(ts) { return new Date(ts).toLocaleTimeString([], { hour:'2-d
 function getSavedPw() { return localStorage.getItem(PW_KEY) || DEFAULT_PW; }
 
 async function dbGet(path) {
-  const r = await fetch(`${DB_URL}/${path}.json`);
-  return r.ok ? r.json() : null;
+  try {
+    const r = await fetch(`${DB_URL}/${path}.json`);
+    return r.ok ? r.json() : null;
+  } catch(e) { return null; }
 }
+
 async function dbSet(path, val) {
-  await fetch(`${DB_URL}/${path}.json`, { method:'PUT', body:JSON.stringify(val) });
-}
-async function dbTransaction(path, fn) {
-  for (let i = 0; i < 10; i++) {
-    const res = await fetch(`${DB_URL}/${path}.json`);
-    const etag = res.headers.get('ETag') || '"0"';
-    const cur = await res.json();
-    const next = fn(cur);
-    if (next === null) return null;
-    const wr = await fetch(`${DB_URL}/${path}.json`, {
+  try {
+    await fetch(`${DB_URL}/${path}.json`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'if-match': etag },
-      body: JSON.stringify(next)
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(val)
     });
-    if (wr.status === 200) return next;
-    await new Promise(r => setTimeout(r, 100 + Math.random() * 200));
-  }
-  return null;
+  } catch(e) {}
+}
+
+// Use Firebase's atomic increment via REST PATCH with ServerValue
+async function claimNumber() {
+  const t = today();
+  // 1. Read current session
+  const session = await dbGet('attendance');
+  if (!session || session.date !== t || !session.open) return null;
+  if ((session.count || 0) >= 200) return null;
+
+  // 2. Push a new entry to the log (Firebase auto-key)
+  const ts = Date.now();
+  const pushRes = await fetch(`${DB_URL}/attendance/log.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ts })
+  });
+  if (!pushRes.ok) return null;
+  const { name: pushKey } = await pushRes.json();
+
+  // 3. Read all log entries to determine this member's position
+  const logData = await dbGet('attendance/log');
+  if (!logData) return null;
+
+  // Sort all entries by timestamp to get a stable position
+  const entries = Object.entries(logData).map(([k, v]) => ({ key: k, ts: v.ts }));
+  entries.sort((a, b) => a.ts - b.ts);
+  const myIndex = entries.findIndex(e => e.key === pushKey);
+  const myNum = myIndex + 1;
+
+  // 4. Update count on session
+  await dbSet('attendance/count', myNum > (session.count || 0) ? myNum : session.count);
+
+  return myNum;
 }
 
 function show(id) {
-  ['loginScreen','hostScreen','memberScreen'].forEach(s => {
-    document.getElementById(s).classList.remove('active');
-  });
+  ['loginScreen','hostScreen','memberScreen'].forEach(s =>
+    document.getElementById(s).classList.remove('active')
+  );
   document.getElementById(id).classList.add('active');
 }
 
@@ -225,9 +245,10 @@ async function initHost() {
   qrEl.innerHTML = '';
   new QRCode(qrEl, { text:url, width:200, height:200, colorDark:'#533ab7', colorLight:'#ffffff', correctLevel:QRCode.CorrectLevel.H });
 
-  const existing = await dbGet(SESSION);
+  // Init session for today if needed
+  const existing = await dbGet('attendance');
   if (!existing || existing.date !== today()) {
-    await dbSet(SESSION, { count:0, log:[], open:true, date:today() });
+    await dbSet('attendance', { count:0, log:{}, open:true, date:today() });
   }
 
   renderHost();
@@ -236,26 +257,31 @@ async function initHost() {
 }
 
 async function renderHost() {
-  const data = await dbGet(SESSION);
+  const data = await dbGet('attendance');
   if (!data) return;
   document.getElementById('liveBadge').textContent = 'live';
-  document.getElementById('checkedIn').textContent = data.count || 0;
-  document.getElementById('remaining').textContent = Math.max(0, 200 - (data.count || 0));
 
   const log = data.log ? Object.values(data.log) : [];
+  const count = log.length;
+  document.getElementById('checkedIn').textContent = count;
+  document.getElementById('remaining').textContent = Math.max(0, 200 - count);
+
   const list = document.getElementById('logList');
   if (log.length === 0) {
     list.innerHTML = '<p style="font-size:13px;color:#bbb;text-align:center;padding:16px 0;">No check-ins yet</p>';
   } else {
-    list.innerHTML = [...log].reverse().slice(0,30).map(e =>
-      `<div class="log-item"><span class="log-num">#${e.num}</span><span class="log-time">${formatTime(e.ts)}</span></div>`
-    ).join('');
+    const sorted = [...log].sort((a,b) => b.ts - a.ts).slice(0, 30);
+    const all = [...log].sort((a,b) => a.ts - b.ts);
+    list.innerHTML = sorted.map(e => {
+      const num = all.findIndex(x => x.ts === e.ts) + 1;
+      return `<div class="log-item"><span class="log-num">#${num}</span><span class="log-time">${formatTime(e.ts)}</span></div>`;
+    }).join('');
   }
 }
 
 async function resetSession() {
   if (!confirm('Reset attendance? All check-ins will be cleared.')) return;
-  await dbSet(SESSION, { count:0, log:[], open:true, date:today() });
+  await dbSet('attendance', { count:0, log:{}, open:true, date:today() });
   renderHost();
 }
 
@@ -272,24 +298,17 @@ async function initMember() {
     return;
   }
 
-  const result = await dbTransaction(SESSION, (data) => {
-    if (!data || !data.open || (data.count||0) >= 200) return null;
-    const newCount = (data.count||0) + 1;
-    const log = data.log || [];
-    log.push({ num:newCount, ts:Date.now() });
-    return { ...data, count:newCount, log };
-  });
-
+  const num = await claimNumber();
   document.getElementById('memberLoading').style.display = 'none';
 
-  if (!result) {
+  if (!num) {
     document.getElementById('sessionClosedMsg').style.display = 'block';
     return;
   }
 
-  localStorage.setItem(myKey, result.count);
+  localStorage.setItem(myKey, num);
   document.getElementById('newCheck').style.display = 'block';
-  document.getElementById('memberNum').textContent = result.count;
+  document.getElementById('memberNum').textContent = num;
 }
 
 const params = new URLSearchParams(window.location.search);
