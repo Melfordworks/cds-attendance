@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CDS Attendance</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: sans-serif; background: #f5f5f5; min-height: 100vh; }
+.screen { display: none; padding: 24px 20px; max-width: 480px; margin: 0 auto; }
+.screen.active { display: block; }
+h1 { font-size: 22px; font-weight: 500; margin-bottom: 4px; color: #111; }
+p.sub { font-size: 14px; color: #666; margin-bottom: 24px; }
+.card { background: white; border-radius: 12px; border: 0.5px solid #e0e0e0; padding: 20px; margin-bottom: 16px; }
+.qr-wrap { display: flex; justify-content: center; padding: 16px 0; }
+.stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.stat { background: #f7f7f5; border-radius: 8px; padding: 14px; text-align: center; }
+.stat .val { font-size: 28px; font-weight: 500; color: #111; }
+.stat .lbl { font-size: 12px; color: #888; margin-top: 2px; }
+.log { max-height: 220px; overflow-y: auto; }
+.log-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 0.5px solid #f0f0f0; font-size: 13px; }
+.log-item:last-child { border-bottom: none; }
+.log-num { font-weight: 500; background: #eeedfe; color: #3c3489; border-radius: 6px; padding: 2px 8px; }
+.log-time { color: #aaa; font-size: 12px; }
+.btn { width: 100%; padding: 12px; border-radius: 8px; border: 0.5px solid #ddd; background: white; font-size: 14px; cursor: pointer; margin-top: 8px; }
+.btn:hover { background: #f5f5f5; }
+.btn.danger { border-color: #f09595; color: #a32d2d; }
+.btn.primary { background: #533ab7; color: white; border-color: #533ab7; }
+.btn.primary:hover { background: #3c2a8a; }
+.big-num { font-size: 96px; font-weight: 500; color: #533ab7; text-align: center; line-height: 1; margin: 24px 0 8px; }
+.arrive-label { text-align: center; font-size: 15px; color: #888; margin-bottom: 4px; }
+.group-name { text-align: center; font-size: 13px; color: #bbb; margin-bottom: 32px; }
+.tick { width: 56px; height: 56px; border-radius: 50%; background: #eeedfe; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
+.tick svg { width: 28px; height: 28px; }
+.badge { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 6px; background: #e1f5ee; color: #085041; margin-left: 8px; vertical-align: middle; }
+input[type=password], input[type=text] { width: 100%; padding: 10px 12px; border-radius: 8px; border: 0.5px solid #ddd; font-size: 14px; margin-bottom: 10px; outline: none; }
+input:focus { border-color: #533ab7; }
+.err { font-size: 12px; color: #a32d2d; margin-bottom: 8px; min-height: 16px; }
+.lock-icon { width: 48px; height: 48px; border-radius: 50%; background: #eeedfe; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; }
+.lock-icon svg { width: 22px; height: 22px; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" class="screen active">
+  <div style="padding-top: 40px;">
+    <div class="lock-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#533ab7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+    </div>
+    <h1 style="text-align:center;">Admin access</h1>
+    <p class="sub" style="text-align:center;margin-bottom:24px;">Enter your password to manage attendance</p>
+    <div class="card">
+      <input type="password" id="pwInput" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()" />
+      <p class="err" id="loginErr"></p>
+      <button class="btn primary" onclick="doLogin()">Sign in</button>
+      <button class="btn" style="margin-top:8px;" onclick="goMember()">I'm a member — scan QR instead</button>
+    </div>
+    <p style="font-size:12px;color:#bbb;text-align:center;margin-top:12px;">Default password is <strong>cds2024</strong> — change it after login.</p>
+  </div>
+</div>
+
+<!-- HOST SCREEN -->
+<div id="hostScreen" class="screen">
+  <h1>CDS Attendance <span id="liveBadge" class="badge">connecting...</span></h1>
+  <p class="sub" id="hostDate"></p>
+
+  <div class="card">
+    <p style="font-size:13px;color:#888;margin-bottom:12px;text-align:center;">Members scan to get their number</p>
+    <div class="qr-wrap"><div id="qrcode"></div></div>
+    <p style="font-size:11px;color:#bbb;text-align:center;margin-top:10px;word-break:break-all;" id="qrUrl"></p>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat"><div class="val" id="checkedIn">0</div><div class="lbl">Checked in</div></div>
+    <div class="stat"><div class="val" id="remaining">200</div><div class="lbl">Remaining</div></div>
+  </div>
+
+  <div class="card">
+    <p style="font-size:13px;font-weight:500;margin-bottom:12px;">Recent arrivals</p>
+    <div class="log" id="logList">
+      <p style="font-size:13px;color:#bbb;text-align:center;padding:16px 0;">No check-ins yet</p>
+    </div>
+  </div>
+
+  <button class="btn" onclick="showChangePw()" style="margin-top:0;">Change password</button>
+  <button class="btn danger" onclick="resetSession()">Reset session</button>
+  <button class="btn" onclick="logout()" style="color:#888;">Log out</button>
+
+  <div id="changePwPanel" class="card" style="display:none;margin-top:16px;">
+    <p style="font-size:14px;font-weight:500;margin-bottom:12px;">Change password</p>
+    <input type="password" id="newPw1" placeholder="New password" />
+    <input type="password" id="newPw2" placeholder="Confirm new password" />
+    <p class="err" id="pwChangeErr"></p>
+    <button class="btn primary" onclick="doChangePw()">Save new password</button>
+    <button class="btn" onclick="hidePwPanel()" style="margin-top:6px;">Cancel</button>
+  </div>
+</div>
+
+<!-- MEMBER SCREEN -->
+<div id="memberScreen" class="screen">
+  <div id="alreadyChecked" style="display:none">
+    <div class="card" style="text-align:center;padding:32px 20px;margin-top:40px;">
+      <p style="font-size:14px;color:#888;margin-bottom:8px;">You already checked in today</p>
+      <div class="big-num" id="myNumAgain"></div>
+      <p class="arrive-label">Your arrival number</p>
+    </div>
+  </div>
+  <div id="newCheck" style="display:none;padding-top:40px;">
+    <div class="tick">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#533ab7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+    </div>
+    <p class="arrive-label">You are number</p>
+    <div class="big-num" id="memberNum">—</div>
+    <p class="group-name">CDS Attendance &bull; <span id="memberDate"></span></p>
+    <div class="card" style="text-align:center;">
+      <p style="font-size:13px;color:#888;">Show this screen to your group coordinator</p>
+    </div>
+  </div>
+  <div id="memberLoading" style="text-align:center;padding:80px 20px;">
+    <p style="color:#888;font-size:14px;">Assigning your number...</p>
+  </div>
+  <div id="sessionClosedMsg" style="display:none;text-align:center;padding:80px 20px;">
+    <p style="font-size:20px;font-weight:500;color:#111;margin-bottom:8px;">Session closed</p>
+    <p style="color:#888;font-size:14px;">Attendance is no longer open. Contact your group coordinator.</p>
+  </div>
+</div>
+
+<script>
+const DB_URL = 'https://monday-cds-attendance-default-rtdb.firebaseio.com';
+const SESSION = 'attendance';
+const PW_KEY = 'cds_admin_pw';
+const DEFAULT_PW = 'cds2024';
+
+function today() { return new Date().toISOString().split('T')[0]; }
+function formatTime(ts) { return new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }); }
+function getSavedPw() { return localStorage.getItem(PW_KEY) || DEFAULT_PW; }
+
+async function dbGet(path) {
+  const r = await fetch(`${DB_URL}/${path}.json`);
+  return r.ok ? r.json() : null;
+}
+async function dbSet(path, val) {
+  await fetch(`${DB_URL}/${path}.json`, { method:'PUT', body:JSON.stringify(val) });
+}
+async function dbTransaction(path, fn) {
+  for (let i = 0; i < 10; i++) {
+    const res = await fetch(`${DB_URL}/${path}.json`);
+    const etag = res.headers.get('ETag') || '"0"';
+    const cur = await res.json();
+    const next = fn(cur);
+    if (next === null) return null;
+    const wr = await fetch(`${DB_URL}/${path}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'if-match': etag },
+      body: JSON.stringify(next)
+    });
+    if (wr.status === 200) return next;
+    await new Promise(r => setTimeout(r, 100 + Math.random() * 200));
+  }
+  return null;
+}
+
+function show(id) {
+  ['loginScreen','hostScreen','memberScreen'].forEach(s => {
+    document.getElementById(s).classList.remove('active');
+  });
+  document.getElementById(id).classList.add('active');
+}
+
+function doLogin() {
+  const val = document.getElementById('pwInput').value.trim();
+  if (val === getSavedPw()) {
+    sessionStorage.setItem('cds_authed', '1');
+    document.getElementById('loginErr').textContent = '';
+    document.getElementById('pwInput').value = '';
+    initHost();
+  } else {
+    document.getElementById('loginErr').textContent = 'Incorrect password. Try again.';
+  }
+}
+
+function logout() {
+  sessionStorage.removeItem('cds_authed');
+  show('loginScreen');
+}
+
+function goMember() {
+  show('memberScreen');
+  initMember();
+}
+
+function showChangePw() { document.getElementById('changePwPanel').style.display = 'block'; }
+function hidePwPanel() {
+  document.getElementById('changePwPanel').style.display = 'none';
+  document.getElementById('newPw1').value = '';
+  document.getElementById('newPw2').value = '';
+  document.getElementById('pwChangeErr').textContent = '';
+}
+function doChangePw() {
+  const p1 = document.getElementById('newPw1').value.trim();
+  const p2 = document.getElementById('newPw2').value.trim();
+  const err = document.getElementById('pwChangeErr');
+  if (!p1) { err.textContent = 'Password cannot be empty.'; return; }
+  if (p1 !== p2) { err.textContent = 'Passwords do not match.'; return; }
+  if (p1.length < 4) { err.textContent = 'Must be at least 4 characters.'; return; }
+  localStorage.setItem(PW_KEY, p1);
+  hidePwPanel();
+  alert('Password updated successfully.');
+}
+
+async function initHost() {
+  show('hostScreen');
+  document.getElementById('hostDate').textContent = new Date().toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+
+  const url = window.location.href.split('?')[0] + '?attend=1';
+  document.getElementById('qrUrl').textContent = url;
+  const qrEl = document.getElementById('qrcode');
+  qrEl.innerHTML = '';
+  new QRCode(qrEl, { text:url, width:200, height:200, colorDark:'#533ab7', colorLight:'#ffffff', correctLevel:QRCode.CorrectLevel.H });
+
+  const existing = await dbGet(SESSION);
+  if (!existing || existing.date !== today()) {
+    await dbSet(SESSION, { count:0, log:[], open:true, date:today() });
+  }
+
+  renderHost();
+  if (window._hostPoll) clearInterval(window._hostPoll);
+  window._hostPoll = setInterval(renderHost, 3000);
+}
+
+async function renderHost() {
+  const data = await dbGet(SESSION);
+  if (!data) return;
+  document.getElementById('liveBadge').textContent = 'live';
+  document.getElementById('checkedIn').textContent = data.count || 0;
+  document.getElementById('remaining').textContent = Math.max(0, 200 - (data.count || 0));
+
+  const log = data.log ? Object.values(data.log) : [];
+  const list = document.getElementById('logList');
+  if (log.length === 0) {
+    list.innerHTML = '<p style="font-size:13px;color:#bbb;text-align:center;padding:16px 0;">No check-ins yet</p>';
+  } else {
+    list.innerHTML = [...log].reverse().slice(0,30).map(e =>
+      `<div class="log-item"><span class="log-num">#${e.num}</span><span class="log-time">${formatTime(e.ts)}</span></div>`
+    ).join('');
+  }
+}
+
+async function resetSession() {
+  if (!confirm('Reset attendance? All check-ins will be cleared.')) return;
+  await dbSet(SESSION, { count:0, log:[], open:true, date:today() });
+  renderHost();
+}
+
+async function initMember() {
+  document.getElementById('memberDate').textContent = new Date().toLocaleDateString(undefined, { month:'short', day:'numeric', year:'numeric' });
+
+  const myKey = 'cds_num_' + today();
+  const myNum = localStorage.getItem(myKey);
+
+  if (myNum) {
+    document.getElementById('memberLoading').style.display = 'none';
+    document.getElementById('alreadyChecked').style.display = 'block';
+    document.getElementById('myNumAgain').textContent = myNum;
+    return;
+  }
+
+  const result = await dbTransaction(SESSION, (data) => {
+    if (!data || !data.open || (data.count||0) >= 200) return null;
+    const newCount = (data.count||0) + 1;
+    const log = data.log || [];
+    log.push({ num:newCount, ts:Date.now() });
+    return { ...data, count:newCount, log };
+  });
+
+  document.getElementById('memberLoading').style.display = 'none';
+
+  if (!result) {
+    document.getElementById('sessionClosedMsg').style.display = 'block';
+    return;
+  }
+
+  localStorage.setItem(myKey, result.count);
+  document.getElementById('newCheck').style.display = 'block';
+  document.getElementById('memberNum').textContent = result.count;
+}
+
+const params = new URLSearchParams(window.location.search);
+if (params.get('attend') === '1') {
+  show('memberScreen');
+  initMember();
+} else if (sessionStorage.getItem('cds_authed')) {
+  initHost();
+} else {
+  show('loginScreen');
+}
+</script>
+</body>
+</html>
